@@ -10,12 +10,10 @@ import time
 import socket
 import ssl
 import re
-import select
 import http.client
 from urllib.parse import urlparse
-from http.server import HTTPServer, BaseHTTPRequestHandler, SimpleHTTPRequestHandler
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
-from io import StringIO
 from subprocess import Popen, PIPE
 
 class Utility(object):
@@ -59,32 +57,24 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
             return HTTPServer.handle_error(self, request, client_address)
 
 class shadowProxyRequestHandler(BaseHTTPRequestHandler):
-    cakey   =   Utility.getAbsPath('ca.key')    # CA私钥
-    cacert  =   Utility.getAbsPath('ca.crt')    # CA公钥自签名根证书
-    certkey =   Utility.getAbsPath('cert.key')  # 服务器私钥
-    certdir =   Utility.getAbsPath('certs/')
-    timeout =   300  # todo timeout原本为5,调整为300以便进行调试。
-    threadLock    =   threading.Lock()
-
-    def __init__(self,*args,**kwargs):
+    def __init__(self, *args, **kwargs):
+        self.cakey = Utility.getAbsPath('certs/ca.key')  # CA私钥
+        self.cacert = Utility.getAbsPath('certs/ca.crt')  # CA公钥自签名根证书
+        self.certkey = Utility.getAbsPath('certs/cert.key')  # 服务器私钥
+        self.certdir = Utility.getAbsPath('certs/sites/')  # 站点证书
+        self.timeout = 10  # todo timeout原本为5,调整为300以便进行调试。
+        self.threadLock = threading.Lock()
         self.tls        =   threading.local()   # 线程局部变量 Thread Local Storage
         self.tls.conns  =   {}
-
-        BaseHTTPRequestHandler.__init__(self,*args,**kwargs)
+        BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
 
     def do_CONNECT(self):
-        if os.path.isfile(self.cakey) and os.path.isfile(self.cacert) and os.path.isfile(
-            self.certkey) and os.path.isdir(self.certdir):
+        if os.path.isfile(self.cakey) and os.path.isfile(self.cacert) and os.path.isfile(self.certkey) and os.path.isdir(self.certdir):
             self.connect_intercept()
         else:
             # 提示证书安装
             print(Utility.colorRender(31, "服务器缺少证书，请在程序目录生成证书"))
-            print(Utility.colorRender(36, "cd %s"
-                                          "openssl genrsa -out ca.key 2048"
-                                          "openssl req -new -x509 -days 3650 -key ca.key -out ca.crt -subj '/CN=shadowProxy CA'"
-                                          "openssl genrsa -out cert.key 2048"
-                                          "mkdir certs/" % os.path.dirname(os.path.abspath(__file__))))
-            self.send_error(502,"尝试与代理服务器建立HTTPS连接，但服务器缺少证书配置。")
+            self.send_error(502,"Server lack of certificate")
             # 错误代码 https://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html
             return
 
@@ -130,7 +120,7 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == 'http://shadow.proxy/':
             self.send_cacert()
-            print("%s download %s" % (self.client_address,self.cacert))
+            # print("%s download %s" % (self.client_address, self.cacert))
             return
 
         req = self
@@ -140,63 +130,62 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
         # todo 为什么需要替换为完整URL路径？
         # https://www.w3.org/Protocols/rfc2616/rfc2616-sec5.html
         # The absoluteURI form is REQUIRED when the request is being made to a proxy. The proxy is requested to forward the request or service it from a valid cache, and return the response. Note that the proxy MAY forward the request on to another proxy or directly to the server specified by the absoluteURI. In order to avoid request loops, a proxy MUST be able to recognize all of its server names, including any aliases, local variations, and the numeric IP address.
+        # print(req.path)
         if req.path[0] == '/':
-            if isinstance(self.connection, ssl.SSLContext): # ssl.SSLSocket
+            if isinstance(self.connection, ssl.SSLSocket): # ssl.SSLSocket or ssl.SSLContext
                 req.path = "https://%s%s" % (req.headers['Host'], req.path)
             else:
                 req.path = "http://%s%s" % (req.headers['Host'], req.path)
-        # req_body_modified = self.request_handler(req, req_body)
-        # if req_body_modified is False:
-        #     self.send_error(403)
-        #     return
-        # elif req_body_modified is not None:
-        #     req_body = req_body_modified
-        #     req.headers['Content-length'] = str(len(req_body))
-
+        # print("处理后path:"+req.path)
         u = urlparse(req.path)
         scheme, netloc, path = u.scheme, u.netloc, (u.path + '?' + u.query if u.query else u.path)
         assert scheme in ("http", "https")
         if netloc:
             req.headers['Host'] = netloc
         setattr(req, 'headers', self.filter_headers(req.headers))
-
+        # if 1:
         try:
-            origin = (scheme, netloc)
-            if origin not in self.tls.conns:
+            target = (scheme, netloc)
+            if target not in self.tls.conns:
 
                 # TODO [核心功能点]代理管理点
                 if scheme == 'https':
-                    self.tls.conns[origin] = http.client.HTTPSConnection(netloc, timeout=self.timeout)
+                    self.tls.conns[target] = http.client.HTTPSConnection(netloc, timeout=self.timeout)
                 else:
-                    self.tls.conns[origin] = http.client.HTTPConnection(netloc, timeout=self.timeout)
-            conn = self.tls.conns[origin]
+                    self.tls.conns[target] = http.client.HTTPConnection(netloc, timeout=self.timeout)
+            conn = self.tls.conns[target]
             conn.request(self.command, path, req_body, dict(self.headers))
             res = conn.getresponse()
-            print("headers 与 msg 相同") if res.headers == res.msg else print("888")
-            # setattr(res, 'headers', res.msg)
             res.response_version = 'HTTP/1.1' if res.version == 11 else 'HTTP/1.0'
 
             # support streaming / Translate-encoding  chunked
             if 'Content-Length' not in res.headers and 'chunked' in res.headers.get('Transfer-Encoding', ''):
-                # self.response_handler(req, req_body, res, '')
+                with self.threadLock:
+                    print(req.headers)
+                    print(Utility.colorRender(33,"chunked\t"+self.path))
+                    print(res.headers)
                 setattr(res, 'headers', self.filter_headers(res.headers))
                 self.relay_streaming(res)   # 转发chunked包
-                with self.threadLock:
-                    self.save_handler(req, req_body, res, '')
+                # with self.threadLock:
+                #     self.save_handler(req, req_body, res, '')
                 return
 
             res_body = res.read() # 非chunked数据包
+        # try:
+        #     pass
         except Exception as e:
-            if origin in self.tls.conns:
-                del self.tls.conns[origin]
+            logging.debug(e)
+            if target in self.tls.conns:
+                del self.tls.conns[target]
             self.send_error(502)
             return
-
+        # 继续处理非chunked的情况
+        print(Utility.colorRender(34, "非chunked\t" + self.path))
         setattr(res, 'headers', self.filter_headers(res.headers))
-        print(res.headers)
-        self.send_response(res.status, res.reason)
+        # print(res.headers)
+        self.send_response_only(res.status, res.reason)
         for keyword in res.headers:
-            print(keyword +": "+ res.headers.get(keyword, "") )
+            # print(keyword +": "+ res.headers.get(keyword, "") )
             self.send_header(keyword, res.headers.get(keyword, ""))
         self.end_headers()
         self.wfile.write(res_body)
@@ -205,21 +194,22 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
 
     # 转发chunked数据包，但没法检测发包结束（即 last-chunk ）
     def relay_streaming(self, res):
-        self.wfile.write("%s %d %s\r\n" % (self.protocol_version, res.status, res.reason))
-        for line in res.headers.headers:
-            self.wfile.write(line)
+        self.send_response_only(res.status, res.reason)
+        # self.wfile.write(b"%s %d %s\r\n" % (self.protocol_version, res.status, res.reason))
+        for keyword in res.headers:
+            self.send_header(keyword, res.headers.get(keyword, ""))
         self.end_headers()
         try:
             while True:
                 # print "res.read前" + str(time.time())
-                chunk = res.read(8192)  # 经测算，该方法为阻塞性的。
+                chunk = res.read(4096)  # 经测算，该方法为阻塞性的。
                 # print "res.read后" + str(time.time())
                 # todo 如何检测last-chunk？
 
                 if not chunk:  # this code is useless
                     break
                 self.wfile.write(chunk)
-            self.wfile.flush()
+                self.wfile.flush()
         except socket.error:
             # connection closed by client
             pass
@@ -234,8 +224,15 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
     def filter_headers(self, headers):
         # http://tools.ietf.org/html/rfc2616#section-13.5.1
         hop_by_hop = ('connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade')
+        hop_by_hop = ()
         for k in hop_by_hop:
             del headers[k]
+
+        if "Transfer-Encoding" in headers:
+             del headers["Transfer-Encoding"]
+        if  headers['Connection'] == "keep-alive":
+            del headers['Connection']
+            headers['Connection'] = 'close'
 
         # accept only supported encodings
         if 'Accept-Encoding' in headers:
@@ -309,7 +306,7 @@ def main():
         sys.exit(0)
     logging.basicConfig(level=getattr(logging, args.log_level), format='%(asctime)s - %(levelname)s - pid:%(process)d - %(message)s')
 
-    run(HandlerClass=shadowProxyRequestHandler,port=args.port,bind=args.bind)
+    run(ServerClass=ThreadingHTTPServer,HandlerClass=shadowProxyRequestHandler,port=args.port,bind=args.bind)
 
 if __name__ == '__main__':
     main()
