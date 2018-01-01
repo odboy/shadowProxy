@@ -11,10 +11,12 @@ import socket
 import ssl
 import re
 import http.client
+import requests
 from urllib.parse import urlparse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from subprocess import Popen, PIPE
+
 
 class Utility(object):
     @staticmethod
@@ -56,6 +58,40 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
         else:
             return HTTPServer.handle_error(self, request, client_address)
 
+# 管理代理池
+class ProxyCoordinator(object):
+    def __init__(self):
+        self.ipViewURL = "http://api.ipify.org"
+        self.localPublicIP = self.getPublicIP()
+
+
+    def getPublicIP(self, proxy=None):
+        if proxy is None:   # 获取本地IP
+            r = requests.get(self.ipViewURL, timeout=15)
+            return r.text
+        else:
+            try:
+                proxy = re.match(r"^https?://(\d{1,3}[\.:]){4}\d+$", proxy.lower().replace(' ', '')).group()
+                r = requests.get(self.ipViewURL, proxies={proxy.split("://")[0]: proxy}, verify=False, timeout=15)
+                logging.info("返回数据:%s" % r.text.replace(' ', '')[:300])
+                ip = re.match(r"((\d{1,3}\.){3}\d{1,3})", r.text.replace(' ', '')).group()
+                logging.info(" IP :%s" % ip)
+                return ip
+            except:
+                return None
+
+    def verifyProxy(self,proxy):
+        currentIP = self.getPublicIP(proxy)
+        if (currentIP != self.localPublicIP) and (currentIP is not None):
+            return currentIP
+        else:
+            return None
+
+    def dispatchProxy(self,target):   # 为某个目标主机分配代理
+        pass
+        return "http://127.0.0.1:8080"
+
+
 class shadowProxyRequestHandler(BaseHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         self.cakey = Utility.getAbsPath('certs/ca.key')  # CA私钥
@@ -66,6 +102,7 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
         self.threadLock = threading.Lock()
         self.tls        =   threading.local()   # 线程局部变量 Thread Local Storage
         self.tls.conns  =   {}
+        self.pc = ProxyCoordinator()
         BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
 
     def do_CONNECT(self):
@@ -146,13 +183,28 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
         # if 1:
         try:
             target = (scheme, netloc)
-            if target not in self.tls.conns:
 
-                # TODO [核心功能点]代理管理点
-                if scheme == 'https':
-                    self.tls.conns[target] = http.client.HTTPSConnection(netloc, timeout=self.timeout)
-                else:
-                    self.tls.conns[target] = http.client.HTTPConnection(netloc, timeout=self.timeout)
+            # 输入URL的协议和主机，返回可用的连接HTTP(S)Connection
+            proxy = self.pc.dispatchProxy(target)
+            proxy = "http://127.0.0.1:8080" # todo 暂时先固定为http://127.0.0.1:8080
+            # conn = http.client.HTTPSConnection("localhost", 8080)
+            # conn.set_tunnel("www.python.org")
+            # conn.request("HEAD", "/index.html")
+
+            if proxy.split("://")[0] == "http":
+                conn = http.client.HTTPConnection(proxy.split("://")[1], timeout=self.timeout)
+            elif proxy.split("://")[0] == "https":
+                conn = http.client.HTTPSConnection(proxy.split("://")[1], timeout=self.timeout)
+            if target not in self.tls.conns:
+                self.tls.conns[target] = conn.set_tunnel(netloc)        # todo 此处存在逻辑问题，急需梳理！ 这句代理可以省略，但需要在request命令中带全URL地址。
+
+            # if target not in self.tls.conns:
+            #
+            #     # TODO [核心功能点]代理管理点
+            #     if scheme == 'https':
+            #         self.tls.conns[target] = http.client.HTTPSConnection(netloc, timeout=self.timeout)
+            #     else:
+            #         self.tls.conns[target] = http.client.HTTPConnection(netloc, timeout=self.timeout)
             conn = self.tls.conns[target]
             conn.request(self.command, path, req_body, dict(self.headers))
             res = conn.getresponse()
