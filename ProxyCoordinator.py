@@ -10,6 +10,7 @@ import requests
 import re
 import threading
 import queue
+import time
 
 # 1 导入Proxy列表       # 文件导入
 # 2 处理策略：
@@ -23,18 +24,20 @@ class ProxyCoordinator(object):
         self.ipViewURL = "http://api.ipify.org"
         self.localPublicIP = self.getPublicIP()
         self.proxyDict = {}
-        self.availableTimes = multipletimes     # 每个代理可被使用的次数
+        self.availableTimes = multipletimes if multipletimes > 0 else 1     # 每个代理可被使用的次数
         self.rawProxyList = queue.Queue()
         self.proxyDictUsage = {}     # 每个目标作为一个key,value为各自的一个proxyDict。
 
-        print("本地IP :: "+ self.localPublicIP)
-
+    def conditionFunc(self,proxy):
+        """重写该方法，从而引入条件判断，在这种情况下，multipletimes仍然生效，故而建议设置为一个较大值"""
+        return True
 
     def importPorxies(self,proxyListFile):
         """导入Proxy列表文件,一行一个proxy:
         http://127.0.0.1:8080
         https://10.20.30.40:999
         """
+        print("初始化代理池  本地IP :: " + self.localPublicIP)
         print("导入代理池:::\t%s"%proxyListFile)
         with open(proxyListFile,'r') as f:
             for line in f.readlines():
@@ -43,15 +46,17 @@ class ProxyCoordinator(object):
                     self.rawProxyList.put(proxy)
                 except:
                     pass
-            thread_arr=[]
-            for i in range(50): # 多线程进行代理可用性及匿名性验证
-                t = threading.Thread(target=self.__verifyAndImportProxy)
-                thread_arr.append(t)
-            for t in thread_arr:
-                t.start()
-            for t in thread_arr:
-                t.join()
+        thread_arr = []
+        for i in range(min(self.rawProxyList.qsize(), 50)):      # 多线程进行代理可用性及匿名性验证
+            t = threading.Thread(target=self.__verifyAndImportProxy)
+            t.daemon=True
+            thread_arr.append(t)
+        for t in thread_arr:
+            t.start()
+        for t in thread_arr:
+            t.join()
         print("导入完成")
+
 
     def getPublicIP(self, proxy=None):
         """获取通过Proxy上网的公网IP地址，若Proxy为None，则获取本地主机的公网IP"""
@@ -76,7 +81,7 @@ class ProxyCoordinator(object):
                 currentIP = self.getPublicIP(proxy)
                 if (currentIP != self.localPublicIP) and (currentIP is not None):
                     self.proxyDict[proxy] = self.availableTimes
-                    print("%s\t::\t%s\t|%d"%(proxy,currentIP,self.rawProxyList.qsize()))
+                    print("%s\t"%(proxy))
                 else:
                     self.proxyDict[proxy] = 0
 
@@ -96,32 +101,55 @@ class ProxyCoordinator(object):
 
         for item in self.proxyDictUsage[target]:
             if self.proxyDictUsage[target][item] > 0:
-                self.proxyDictUsage[target][item] -= 1
-                return item
+                try:
+                    if self.conditionFunc(item):
+                        self.proxyDictUsage[target][item] -= 1
+                        return item
+                    else:
+                        self.proxyDictUsage[target][item] = 0
+                except:
+                    pass
         return None
 
+class myProxyCoor(ProxyCoordinator):
+    def conditionFunc(self,proxy):
+        print("条件判断：：%s"%proxy)
+        r = requests.get("http://aws.oddboy.cn/1.txt", proxies={proxy.split("://")[0]: proxy}, verify=False, timeout=15)
+        if r.status_code== 200:
+            return True
+        return False
+
 if __name__=="__main__":
-    pc = ProxyCoordinator(multipletimes=2)
+
+    pc = myProxyCoor(multipletimes=2)
     pc.importPorxies("../../pythonCode/kuaidaili_list.txt")
-
-    target1 = ("10.1.1.1", 80)
-    target2 = ("20.2.2.2", 8080)
-
-    print("\t\t\ttarget1")
     while True:
-        proxy = pc.dispatchProxy(target1)
-        if proxy:
-            print(proxy)
-        else:
-            print('无可用Proxy')
-            break
+        print(pc.dispatchProxy())
 
-    print("\t\t\ttarget2")
-    while True:
-        proxy = pc.dispatchProxy(target2)
-        if proxy:
-            print(proxy)
-        else:
-            print('无可用Proxy')
-            break
+        time.sleep(1)
+
+
+    # pc = ProxyCoordinator(multipletimes=2)
+    # pc.importPorxies("../../pythonCode/kuaidaili_list.txt")
+    #
+    # target1 = ("10.1.1.1", 80)
+    # target2 = ("20.2.2.2", 8080)
+    #
+    # print("\t\t\ttarget1")
+    # while True:
+    #     proxy = pc.dispatchProxy(target1)
+    #     if proxy:
+    #         print(proxy)
+    #     else:
+    #         print('无可用Proxy')
+    #         break
+    #
+    # print("\t\t\ttarget2")
+    # while True:
+    #     proxy = pc.dispatchProxy(target2)
+    #     if proxy:
+    #         print(proxy)
+    #     else:
+    #         print('无可用Proxy')
+    #         break
 

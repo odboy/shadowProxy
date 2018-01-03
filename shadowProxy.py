@@ -16,7 +16,9 @@ from urllib.parse import urlparse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from subprocess import Popen, PIPE
+from ProxyCoordinator import ProxyCoordinator
 
+proxyCoor = ProxyCoordinator()
 
 class Utility(object):
     @staticmethod
@@ -50,49 +52,16 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     # The entire Python program exits when no alive non-daemon threads are left.
     # 也就是说设置为daemon的线程会随着主线程的退出而结束，而非daemon线程会阻塞主线程的退出。
 
-    def handle_error(self, request, client_address):
-        # 屏蔽 socket/ssl 相关错误
-        cls, e = sys.exc_info()[:2]
-        if cls is socket.error or cls is ssl.SSLError:
-            pass
-        else:
-            return HTTPServer.handle_error(self, request, client_address)
-
-# 管理代理池
-class ProxyCoordinator(object):
-    def __init__(self):
-        self.ipViewURL = "http://api.ipify.org"
-        self.localPublicIP = self.getPublicIP()
-
-
-    def getPublicIP(self, proxy=None):
-        if proxy is None:   # 获取本地IP
-            r = requests.get(self.ipViewURL, timeout=15)
-            return r.text
-        else:
-            try:
-                proxy = re.match(r"^https?://(\d{1,3}[\.:]){4}\d+$", proxy.lower().replace(' ', '')).group()
-                r = requests.get(self.ipViewURL, proxies={proxy.split("://")[0]: proxy}, verify=False, timeout=15)
-                logging.info("返回数据:%s" % r.text.replace(' ', '')[:300])
-                ip = re.match(r"((\d{1,3}\.){3}\d{1,3})", r.text.replace(' ', '')).group()
-                logging.info(" IP :%s" % ip)
-                return ip
-            except:
-                return None
-
-    def verifyProxy(self,proxy):
-        currentIP = self.getPublicIP(proxy)
-        if (currentIP != self.localPublicIP) and (currentIP is not None):
-            return currentIP
-        else:
-            return None
-
-    def dispatchProxy(self,target):   # 为某个目标主机分配代理
-        pass
-        return "http://127.0.0.1:8080"
-
+    # def handle_error(self, request, client_address):
+    #     # 屏蔽 socket/ssl 相关错误
+    #     cls, e = sys.exc_info()[:2]
+    #     if cls is socket.error or cls is ssl.SSLError:
+    #         pass
+    #     else:
+    #         return HTTPServer.handle_error(self, request, client_address)
 
 class shadowProxyRequestHandler(BaseHTTPRequestHandler):
+    global proxyCoor
     def __init__(self, *args, **kwargs):
         self.cakey = Utility.getAbsPath('certs/ca.key')  # CA私钥
         self.cacert = Utility.getAbsPath('certs/ca.crt')  # CA公钥自签名根证书
@@ -102,7 +71,7 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
         self.threadLock = threading.Lock()
         self.tls        =   threading.local()   # 线程局部变量 Thread Local Storage
         self.tls.conns  =   {}
-        self.pc = ProxyCoordinator()
+
         BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
 
     def do_CONNECT(self):
@@ -117,7 +86,7 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
 
     def connect_intercept(self):
         if self.path[0] == "/":
-            self.send_response_only(599, 'HEY, WHAT FUCK YOU WANNA DO?')
+            self.send_response_only(599, 'HEY, WHAT FUCK YOU WANNA DO?  Just Kidding...')
             self.end_headers()
             return
         hostname = self.path.split(':')[0]
@@ -155,6 +124,7 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
             self.close_connection = 1
 
     def do_GET(self):
+
         if self.path == 'http://shadow.proxy/':
             self.send_cacert()
             # print("%s download %s" % (self.client_address, self.cacert))
@@ -164,85 +134,108 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
         content_length = int(req.headers.get('Content-Length', 0))
         req_body = self.rfile.read(content_length) if content_length else None
 
-        # todo 为什么需要替换为完整URL路径？
-        # https://www.w3.org/Protocols/rfc2616/rfc2616-sec5.html
-        # The absoluteURI form is REQUIRED when the request is being made to a proxy. The proxy is requested to forward the request or service it from a valid cache, and return the response. Note that the proxy MAY forward the request on to another proxy or directly to the server specified by the absoluteURI. In order to avoid request loops, a proxy MUST be able to recognize all of its server names, including any aliases, local variations, and the numeric IP address.
-        # print(req.path)
         if req.path[0] == '/':
             if isinstance(self.connection, ssl.SSLSocket): # ssl.SSLSocket or ssl.SSLContext
                 req.path = "https://%s%s" % (req.headers['Host'], req.path)
             else:
                 req.path = "http://%s%s" % (req.headers['Host'], req.path)
-        # print("处理后path:"+req.path)
+
         u = urlparse(req.path)
-        scheme, netloc, path = u.scheme, u.netloc, (u.path + '?' + u.query if u.query else u.path)
+        scheme, netloc= u.scheme, u.netloc
         assert scheme in ("http", "https")
         if netloc:
             req.headers['Host'] = netloc
         setattr(req, 'headers', self.filter_headers(req.headers))
-        # if 1:
-        try:
+        if 1:
+        # try:
             target = (scheme, netloc)
 
             # 输入URL的协议和主机，返回可用的连接HTTP(S)Connection
-            proxy = self.pc.dispatchProxy(target)
-            proxy = "http://127.0.0.1:8080" # todo 暂时先固定为http://127.0.0.1:8080
+            proxy = proxyCoor.dispatchProxy(target)
+            if proxy is None:
+                print("未能获取到可用Proxy...(可能是Proxy耗尽...)")
+                self.send_error(502,"proxy resource RUN OUT!!!")
+                return
+            print("访问 --> "+ req.path)
+            print("选取 --> "+ proxy)
+            #proxy = "http://127.0.0.1:8080" # todo 暂时先固定为http://127.0.0.1:8080
             # conn = http.client.HTTPSConnection("localhost", 8080)
-            # conn.set_tunnel("www.python.org")
-            # conn.request("HEAD", "/index.html")
+            # conn.request("HEAD", "http://www.python.org/index.html")
 
             if proxy.split("://")[0] == "http":
                 conn = http.client.HTTPConnection(proxy.split("://")[1], timeout=self.timeout)
             elif proxy.split("://")[0] == "https":
                 conn = http.client.HTTPSConnection(proxy.split("://")[1], timeout=self.timeout)
-            if target not in self.tls.conns:
-                self.tls.conns[target] = conn.set_tunnel(netloc)        # todo 此处存在逻辑问题，急需梳理！ 这句代理可以省略，但需要在request命令中带全URL地址。
 
-            # if target not in self.tls.conns:
-            #
-            #     # TODO [核心功能点]代理管理点
-            #     if scheme == 'https':
-            #         self.tls.conns[target] = http.client.HTTPSConnection(netloc, timeout=self.timeout)
-            #     else:
-            #         self.tls.conns[target] = http.client.HTTPConnection(netloc, timeout=self.timeout)
-            conn = self.tls.conns[target]
-            conn.request(self.command, path, req_body, dict(self.headers))
+            conn.request(self.command, req.path, req_body, dict(req.headers))
             res = conn.getresponse()
             res.response_version = 'HTTP/1.1' if res.version == 11 else 'HTTP/1.0'
 
-            # support streaming / Translate-encoding  chunked
-            if 'Content-Length' not in res.headers and 'chunked' in res.headers.get('Transfer-Encoding', ''):
-                with self.threadLock:
-                    print(req.headers)
-                    print(Utility.colorRender(33,"chunked\t"+self.path))
-                    print(res.headers)
-                setattr(res, 'headers', self.filter_headers(res.headers))
-                self.relay_streaming(res)   # 转发chunked包
-                # with self.threadLock:
-                #     self.save_handler(req, req_body, res, '')
-                return
+            setattr(res, 'headers', self.filter_headers(res.headers))
+            self.send_response_only(res.status, res.reason)
+            for keyword in res.headers:
+                self.send_header(keyword, res.headers.get(keyword, ""))
+            self.end_headers()
+            if 'Content-Length' not in res.headers:
+                for chunks in self._read_chunked(res):
+                    self.wfile.write(hex(len(chunks))[2:].encode())
+                    self.wfile.write(b"\r\n")
+                    self.wfile.write(chunks)
+                    self.wfile.write(b"\r\n")
+                #self.wfile.write(b"\r\n")
 
             res_body = res.read() # 非chunked数据包
-        # try:
-        #     pass
+            self.wfile.write(res_body)
+            self.wfile.flush()
+            conn.close()
+        try:
+            pass
         except Exception as e:
-            logging.debug(e)
-            if target in self.tls.conns:
-                del self.tls.conns[target]
             self.send_error(502)
             return
-        # 继续处理非chunked的情况
-        print(Utility.colorRender(34, "非chunked\t" + self.path))
-        setattr(res, 'headers', self.filter_headers(res.headers))
-        # print(res.headers)
-        self.send_response_only(res.status, res.reason)
-        for keyword in res.headers:
-            # print(keyword +": "+ res.headers.get(keyword, "") )
-            self.send_header(keyword, res.headers.get(keyword, ""))
-        self.end_headers()
-        self.wfile.write(res_body)
-        self.wfile.flush()
+        finally:
+            pass
 
+    def __readline(self, fileLike, size=None):
+        result = b''
+        bytes_read = 0
+        while True:
+            if size is not None and bytes_read >= size:
+                break
+            ch = fileLike.read(1)
+            bytes_read += 1
+            if not ch:
+                break
+            else:
+                result += ch
+                if ch == b'\n':
+                    break
+        return result
+
+    def _read_chunked(self, rfile):
+        """
+        Read a HTTP body with chunked transfer encoding.
+
+        Args:
+            rfile: the input file
+        """
+        while True:
+            line = self.__readline(rfile)
+            if line == b"":
+                break
+            if line != b"\r\n" and line != b"\n":
+                try:
+                    length = int(line, 16)
+                except:
+                    break
+
+                chunk = rfile.read(length)
+                suffix = self.__readline(rfile, 5)
+                if suffix != b"\r\n":
+                    break
+                if length == 0:
+                    return
+                yield chunk
 
     # 转发chunked数据包，但没法检测发包结束（即 last-chunk ）
     def relay_streaming(self, res):
@@ -275,16 +268,10 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
 
     def filter_headers(self, headers):
         # http://tools.ietf.org/html/rfc2616#section-13.5.1
-        hop_by_hop = ('connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade')
-        hop_by_hop = ()
+        hop_by_hop = ('Connection', 'Keep_Alive', 'Proxy-Authenticate', 'Proxy-Authorization', 'TE', 'Trailers', 'Transfer-Encoding', 'Upgrade')
+        #hop_by_hop = ()
         for k in hop_by_hop:
             del headers[k]
-
-        if "Transfer-Encoding" in headers:
-             del headers["Transfer-Encoding"]
-        if  headers['Connection'] == "keep-alive":
-            del headers['Connection']
-            headers['Connection'] = 'close'
 
         # accept only supported encodings
         if 'Accept-Encoding' in headers:
@@ -305,18 +292,6 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
         self.send_header('Connection', 'close')
         self.end_headers()
         self.wfile.write(data)
-
-    # 修改request内容
-    def request_handler(self, req, req_body):
-        pass
-
-    # 修改response内容
-    def response_handler(self, req, req_body, res, res_body):
-        pass
-
-    # 保持交互内容
-    def save_handler(self, req, req_body, res, res_body):
-        pass
 
 def run(HandlerClass=BaseHTTPRequestHandler,
          ServerClass=HTTPServer, protocol="HTTP/1.1", port=8088, bind=""):
@@ -348,14 +323,13 @@ def main():
     parser.add_argument('--bind', dest="bind",default='0.0.0.0', help='Default: 0.0.0.0')
     parser.add_argument('--port', dest='port',type=int,default='8088', help='Default: 8088')
     parser.add_argument('--log-level', default='INFO', choices=('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'), help='Default: INFO')
-
-    parser.add_argument('--testcode', action='store_true', default = False,help="测试使用" )
-    # todo 添加代理池相关配置及分配原则等。。。
+    parser.add_argument('--proxyListFile', dest='proxyListFile', required=True, help='代理列表文件')
 
     args = parser.parse_args()
-    if args.testcode:
-        test()
-        sys.exit(0)
+
+
+    proxyCoor.importPorxies(args.proxyListFile)
+
     logging.basicConfig(level=getattr(logging, args.log_level), format='%(asctime)s - %(levelname)s - pid:%(process)d - %(message)s')
 
     run(ServerClass=ThreadingHTTPServer,HandlerClass=shadowProxyRequestHandler,port=args.port,bind=args.bind)
