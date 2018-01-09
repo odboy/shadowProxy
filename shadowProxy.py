@@ -67,7 +67,7 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
         self.cacert = Utility.getAbsPath('certs/ca.crt')  # CA公钥自签名根证书
         self.certkey = Utility.getAbsPath('certs/cert.key')  # 服务器私钥
         self.certdir = Utility.getAbsPath('certs/sites/')  # 站点证书
-        self.timeout = 10  # todo timeout原本为5,调整为300以便进行调试。
+        self.timeout = 30  # todo timeout原本为5,调整为300以便进行调试。
         self.threadLock = threading.Lock()
         self.tls        =   threading.local()   # 线程局部变量 Thread Local Storage
         self.tls.conns  =   {}
@@ -146,8 +146,7 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
         if netloc:
             req.headers['Host'] = netloc
         setattr(req, 'headers', self.filter_headers(req.headers))
-        if 1:
-        # try:
+        try:
             target = (scheme, netloc)
 
             # 输入URL的协议和主机，返回可用的连接HTTP(S)Connection
@@ -158,9 +157,6 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
                 return
             print("访问 --> "+ req.path)
             print("选取 --> "+ proxy)
-            #proxy = "http://127.0.0.1:8080" # todo 暂时先固定为http://127.0.0.1:8080
-            # conn = http.client.HTTPSConnection("localhost", 8080)
-            # conn.request("HEAD", "http://www.python.org/index.html")
 
             if proxy.split("://")[0] == "http":
                 conn = http.client.HTTPConnection(proxy.split("://")[1], timeout=self.timeout)
@@ -188,8 +184,6 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(res_body)
             self.wfile.flush()
             conn.close()
-        try:
-            pass
         except Exception as e:
             self.send_error(502)
             return

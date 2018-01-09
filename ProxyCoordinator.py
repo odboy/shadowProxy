@@ -27,6 +27,8 @@ class ProxyCoordinator(object):
         self.availableTimes = multipletimes if multipletimes > 0 else 1     # 每个代理可被使用的次数
         self.rawProxyList = queue.Queue()
         self.proxyDictUsage = {}     # 每个目标作为一个key,value为各自的一个proxyDict。
+        self.threadLock = threading.Lock()
+        self.usableCount = 0
 
     def conditionFunc(self,proxy):
         """重写该方法，从而引入条件判断，在这种情况下，multipletimes仍然生效，故而建议设置为一个较大值"""
@@ -55,7 +57,8 @@ class ProxyCoordinator(object):
             t.start()
         for t in thread_arr:
             t.join()
-        print("导入完成")
+        print(" \b\b" * 50,end="")
+        print("成功导入 %d 个代理"%self.usableCount)
 
 
     def getPublicIP(self, proxy=None):
@@ -81,7 +84,10 @@ class ProxyCoordinator(object):
                 currentIP = self.getPublicIP(proxy)
                 if (currentIP != self.localPublicIP) and (currentIP is not None):
                     self.proxyDict[proxy] = self.availableTimes
-                    print("%s\t"%(proxy))
+                    with self.threadLock:
+                        self.usableCount += 1
+                        print(" \b\b" * 50, end="")
+                        print("\r%s 可用\t已导入数量: %d"%(proxy,self.usableCount),end="")
                 else:
                     self.proxyDict[proxy] = 0
 
