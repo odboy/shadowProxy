@@ -52,13 +52,13 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     # The entire Python program exits when no alive non-daemon threads are left.
     # 也就是说设置为daemon的线程会随着主线程的退出而结束，而非daemon线程会阻塞主线程的退出。
 
-    # def handle_error(self, request, client_address):
-    #     # 屏蔽 socket/ssl 相关错误
-    #     cls, e = sys.exc_info()[:2]
-    #     if cls is socket.error or cls is ssl.SSLError:
-    #         pass
-    #     else:
-    #         return HTTPServer.handle_error(self, request, client_address)
+    def handle_error(self, request, client_address):
+        # 屏蔽 socket/ssl 相关错误
+        cls, e = sys.exc_info()[:2]
+        if cls is socket.error or cls is ssl.SSLError:
+            pass
+        else:
+            return HTTPServer.handle_error(self, request, client_address)
 
 class shadowProxyRequestHandler(BaseHTTPRequestHandler):
     global proxyCoor
@@ -67,7 +67,7 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
         self.cacert = Utility.getAbsPath('certs/ca.crt')  # CA公钥自签名根证书
         self.certkey = Utility.getAbsPath('certs/cert.key')  # 服务器私钥
         self.certdir = Utility.getAbsPath('certs/sites/')  # 站点证书
-        self.timeout = 30  # todo timeout原本为5,调整为300以便进行调试。
+        self.timeout = 15  # up-steaming timeout时间
         self.threadLock = threading.Lock()
         self.tls        =   threading.local()   # 线程局部变量 Thread Local Storage
         self.tls.conns  =   {}
@@ -146,115 +146,49 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
         if netloc:
             req.headers['Host'] = netloc
         setattr(req, 'headers', self.filter_headers(req.headers))
-        try:
-            target = (scheme, netloc)
 
-            # 输入URL的协议和主机，返回可用的连接HTTP(S)Connection
-            proxy = proxyCoor.dispatchProxy(target)
-            if proxy is None:
-                print("未能获取到可用Proxy...(可能是Proxy耗尽...)")
-                self.send_error(502,"proxy resource RUN OUT!!!")
-                return
-            print("访问 --> "+ req.path)
-            print("选取 --> "+ proxy)
-
-            if proxy.split("://")[0] == "http":
-                conn = http.client.HTTPConnection(proxy.split("://")[1], timeout=self.timeout)
-            elif proxy.split("://")[0] == "https":
-                conn = http.client.HTTPSConnection(proxy.split("://")[1], timeout=self.timeout)
-
-            conn.request(self.command, req.path, req_body, dict(req.headers))
-            res = conn.getresponse()
-            res.response_version = 'HTTP/1.1' if res.version == 11 else 'HTTP/1.0'
-
-
-            # if 'Content-Length' not in res.headers:
-            #     for chunks in self._read_chunked(res):
-            #         self.wfile.write(hex(len(chunks))[2:].encode())
-            #         self.wfile.write(b"\r\n")
-            #         self.wfile.write(chunks)
-            #         self.wfile.write(b"\r\n")
-            #     #self.wfile.write(b"\r\n")
-
-            res_body = res.read()       # Transfer-Encoding并不需要特殊处理(除了Content-Length外)
-            if 'Content-Length' not in res.headers:
-                res.headers['Content-Length'] = str(len(res_body))
-            setattr(res, 'headers', self.filter_headers(res.headers))
-            self.send_response_only(res.status, res.reason)
-            for keyword in res.headers:
-                self.send_header(keyword, res.headers.get(keyword, ""))
-            self.end_headers()
-            self.wfile.write(res_body)
-            self.wfile.flush()
-            conn.close()
-        except Exception as e:
-            self.send_error(502)
-            return
-        finally:
-            pass
-
-    def __readline(self, fileLike, size=None):
-        result = b''
-        bytes_read = 0
-        while True:
-            if size is not None and bytes_read >= size:
-                break
-            ch = fileLike.read(1)
-            bytes_read += 1
-            if not ch:
-                break
-            else:
-                result += ch
-                if ch == b'\n':
-                    break
-        return result
-
-    def _read_chunked(self, rfile):
-        """
-        Read a HTTP body with chunked transfer encoding.
-
-        Args:
-            rfile: the input file
-        """
-        while True:
-            line = self.__readline(rfile)
-            if line == b"":
-                break
-            if line != b"\r\n" and line != b"\n":
-                try:
-                    length = int(line, 16)
-                except:
-                    break
-
-                chunk = rfile.read(length)
-                suffix = self.__readline(rfile, 5)
-                if suffix != b"\r\n":
-                    break
-                if length == 0:
+        retryFlag = 0
+        while retryFlag < 10 :
+            try:
+                target = (scheme, netloc)
+                # 输入URL的协议和主机，返回可用的连接HTTP(S)Connection
+                proxy = proxyCoor.dispatchProxy(target)
+                if proxy is None:
+                    print("未能获取到可用Proxy...(可能是Proxy耗尽...)")
+                    self.send_error(502,"proxy resource RUN OUT!!!")
                     return
-                yield chunk
+                print("%s --> [ %d ] %s" % (proxy, retryFlag + 1, req.path))
 
-    # 转发chunked数据包，但没法检测发包结束（即 last-chunk ）
-    def relay_streaming(self, res):
-        self.send_response_only(res.status, res.reason)
-        # self.wfile.write(b"%s %d %s\r\n" % (self.protocol_version, res.status, res.reason))
-        for keyword in res.headers:
-            self.send_header(keyword, res.headers.get(keyword, ""))
-        self.end_headers()
-        try:
-            while True:
-                # print "res.read前" + str(time.time())
-                chunk = res.read(4096)  # 经测算，该方法为阻塞性的。
-                # print "res.read后" + str(time.time())
-                # todo 如何检测last-chunk？
+                if proxy.split("://")[0] == "http":
+                    conn = http.client.HTTPConnection(proxy.split("://")[1], timeout=self.timeout)
+                elif proxy.split("://")[0] == "https":
+                    conn = http.client.HTTPSConnection(proxy.split("://")[1], timeout=self.timeout)
 
-                if not chunk:  # this code is useless
-                    break
-                self.wfile.write(chunk)
-                self.wfile.flush()
-        except socket.error:
-            # connection closed by client
-            pass
+                conn.request(self.command, req.path, req_body, dict(req.headers))
+                res = conn.getresponse()
+                # res.response_version = 'HTTP/1.1' if res.version == 11 else 'HTTP/1.0'
+                res_body = res.read()       # Transfer-Encoding并不需要特殊处理(除了Content-Length外)
+
+            except Exception as e:
+                retryFlag += 1
+                # self.send_error(502)
+                # return
+            else:
+                try:
+                    if 'Content-Length' not in res.headers:
+                        res.headers['Content-Length'] = str(len(res_body))
+                    setattr(res, 'headers', self.filter_headers(res.headers))
+                    self.send_response_only(res.status, res.reason)
+                    for keyword in res.headers:
+                        self.send_header(keyword, res.headers.get(keyword, ""))
+                    self.end_headers()
+                    self.wfile.write(res_body)
+                    self.wfile.flush()
+                except:
+                    pass
+                finally:
+                    retryFlag = 9999  # 极大值，结束重试。
+                    conn.close()
 
     do_HEAD = do_GET
     do_POST = do_GET
@@ -319,11 +253,10 @@ def main():
 
     parser.add_argument('--bind', dest="bind",default='0.0.0.0', help='Default: 0.0.0.0')
     parser.add_argument('--port', dest='port',type=int,default='8088', help='Default: 8088')
-    parser.add_argument('--log-level', default='INFO', choices=('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'), help='Default: INFO')
-    parser.add_argument('--proxyListFile',default="proxylist116(2018-01-04).txt", dest='proxyListFile', required=False, help='代理列表文件')
+    parser.add_argument('--log-level', default='WARNING', choices=('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'), help='Default: WARNING')
+    parser.add_argument('--proxyListFile',default="proxylist.txt", dest='proxyListFile', required=False, help='代理列表文件')
 
     args = parser.parse_args()
-
 
     proxyCoor.importPorxies(args.proxyListFile)
 

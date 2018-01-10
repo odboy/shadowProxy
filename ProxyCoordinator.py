@@ -11,6 +11,8 @@ import re
 import threading
 import queue
 import time
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 # 1 导入Proxy列表       # 文件导入
 # 2 处理策略：
@@ -49,7 +51,7 @@ class ProxyCoordinator(object):
                 except:
                     pass
         thread_arr = []
-        for i in range(min(self.rawProxyList.qsize(), 50)):      # 多线程进行代理可用性及匿名性验证
+        for i in range(min(self.rawProxyList.qsize(), 100)):      # 多线程进行代理可用性及匿名性验证
             t = threading.Thread(target=self.__verifyAndImportProxy)
             t.daemon=True
             thread_arr.append(t)
