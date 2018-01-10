@@ -167,20 +167,23 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
             res = conn.getresponse()
             res.response_version = 'HTTP/1.1' if res.version == 11 else 'HTTP/1.0'
 
+
+            # if 'Content-Length' not in res.headers:
+            #     for chunks in self._read_chunked(res):
+            #         self.wfile.write(hex(len(chunks))[2:].encode())
+            #         self.wfile.write(b"\r\n")
+            #         self.wfile.write(chunks)
+            #         self.wfile.write(b"\r\n")
+            #     #self.wfile.write(b"\r\n")
+
+            res_body = res.read()       # Transfer-Encoding并不需要特殊处理(除了Content-Length外)
+            if 'Content-Length' not in res.headers:
+                res.headers['Content-Length'] = str(len(res_body))
             setattr(res, 'headers', self.filter_headers(res.headers))
             self.send_response_only(res.status, res.reason)
             for keyword in res.headers:
                 self.send_header(keyword, res.headers.get(keyword, ""))
             self.end_headers()
-            if 'Content-Length' not in res.headers:
-                for chunks in self._read_chunked(res):
-                    self.wfile.write(hex(len(chunks))[2:].encode())
-                    self.wfile.write(b"\r\n")
-                    self.wfile.write(chunks)
-                    self.wfile.write(b"\r\n")
-                #self.wfile.write(b"\r\n")
-
-            res_body = res.read() # 非chunked数据包
             self.wfile.write(res_body)
             self.wfile.flush()
             conn.close()
@@ -317,7 +320,7 @@ def main():
     parser.add_argument('--bind', dest="bind",default='0.0.0.0', help='Default: 0.0.0.0')
     parser.add_argument('--port', dest='port',type=int,default='8088', help='Default: 8088')
     parser.add_argument('--log-level', default='INFO', choices=('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'), help='Default: INFO')
-    parser.add_argument('--proxyListFile', dest='proxyListFile', required=True, help='代理列表文件')
+    parser.add_argument('--proxyListFile',default="proxylist116(2018-01-04).txt", dest='proxyListFile', required=False, help='代理列表文件')
 
     args = parser.parse_args()
 
