@@ -229,15 +229,16 @@ def run(HandlerClass=BaseHTTPRequestHandler,
     server_address = (bind, port)
 
     HandlerClass.protocol_version = protocol
-    with ServerClass(server_address, HandlerClass) as httpd:
-        sa = httpd.socket.getsockname()
-        serve_message = "Serving HTTP on {host} port {port} (http://{host}:{port}/) ..."
-        print(serve_message.format(host=sa[0], port=sa[1]))
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\nKeyboard interrupt received, exiting.")
-            sys.exit(0)
+    #with ServerClass(server_address, HandlerClass) as httpd:    # fix bug :: AttributeError: __exit__
+    httpd = ServerClass(server_address, HandlerClass)
+    sa = httpd.socket.getsockname()
+    serve_message = "Serving HTTP on {host} port {port} (http://{host}:{port}/) ..."
+    print(serve_message.format(host=sa[0], port=sa[1]))
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nKeyboard interrupt received, exiting.")
+        sys.exit(0)
 
 def main():
     headCharPic="\r        .--.\n" \
