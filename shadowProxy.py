@@ -149,7 +149,7 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
 
         retryFlag = 0
         while retryFlag < 10 :
-            try:
+            if 1:
                 target = (scheme, netloc)
                 # 输入URL的协议和主机，返回可用的连接HTTP(S)Connection
                 proxy = proxyCoor.dispatchProxy(target)
@@ -168,7 +168,8 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
                 res = conn.getresponse()
                 # res.response_version = 'HTTP/1.1' if res.version == 11 else 'HTTP/1.0'
                 res_body = res.read()       # Transfer-Encoding并不需要特殊处理(除了Content-Length外)
-
+            try:
+                pass
             except Exception as e:
                 retryFlag += 1
                 # self.send_error(502)
@@ -257,8 +258,10 @@ def main():
     parser.add_argument('--log-level', default='WARNING', choices=('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'), help='Default: WARNING')
     parser.add_argument('--proxyListFile',default="proxylist.txt", dest='proxyListFile', required=False, help='代理列表文件')
 
-    args = parser.parse_args()
+    parser.add_argument('-t',dest="multipletimes", default=2147483647,type=int,help='单一代理可被使用的次数,默认为2^31-1')
 
+    args = parser.parse_args()
+    proxyCoor._setAvailableTimes(args.multipletimes)
     proxyCoor.importPorxies(args.proxyListFile)
 
     logging.basicConfig(level=getattr(logging, args.log_level), format='%(asctime)s - %(levelname)s - pid:%(process)d - %(message)s')

@@ -11,17 +11,19 @@ import re
 import threading
 import queue
 import time
+import random
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 # 1 导入Proxy列表       # 文件导入
 # 2 处理策略：
-#   2.1 限定代理的使用次数    # todo 先实现这一种
+#   2.1 限定代理的使用次数
 #   2.2 对单一目标(ip:port)限定代理的使用次数
 #   2.3 指定判断条件：指定方法(GET或HEAD）访问目标某URL，得到200反应。
 
 # 管理代理池
 class ProxyCoordinator(object):
+
     def __init__(self, multipletimes=1):
         self.ipViewURL = "http://api.ipify.org"
         self.localPublicIP = self.getPublicIP()
@@ -31,6 +33,10 @@ class ProxyCoordinator(object):
         self.proxyDictUsage = {}     # 每个目标作为一个key,value为各自的一个proxyDict。
         self.threadLock = threading.Lock()
         self.usableCount = 0
+
+    def _setAvailableTimes(self,multipletimes):
+        self.availableTimes = multipletimes if multipletimes > 0 else 1  # 每个代理可被使用的次数
+        return
 
     def conditionFunc(self,proxy):
         """重写该方法，从而引入条件判断，在这种情况下，multipletimes仍然生效，故而建议设置为一个较大值"""
@@ -107,16 +113,24 @@ class ProxyCoordinator(object):
             if len(dict) <= 0:
                 return None
 
-        for item in self.proxyDictUsage[target]:
-            if self.proxyDictUsage[target][item] > 0:
+        tempFlag = True
+        while tempFlag:
+            if self.proxyDictUsage[target] == 0:
+                return None
+
+            proxy,availabletime = random.choice(list(self.proxyDictUsage[target].items()))
+            if availabletime > 0:
                 try:
-                    if self.conditionFunc(item):
-                        self.proxyDictUsage[target][item] -= 1
-                        return item
+                    if self.conditionFunc(proxy):
+                        tempFlag = False
+                        self.proxyDictUsage[target][proxy] -= 1
+                        return proxy
                     else:
-                        self.proxyDictUsage[target][item] = 0
-                except:
-                    pass
+                        pass
+                except Exception as e:
+                    print(e)
+            else:
+                self.proxyDictUsage[target].pop(proxy)  # 从dict中清除耗尽的Proxy
         return None
 
 class myProxyCoor(ProxyCoordinator):
@@ -130,7 +144,7 @@ class myProxyCoor(ProxyCoordinator):
 if __name__=="__main__":
 
     pc = myProxyCoor(multipletimes=2)
-    pc.importPorxies("../../pythonCode/kuaidaili_list.txt")
+    pc.importPorxies("proxylist.txt")
     while True:
         print(pc.dispatchProxy())
 
