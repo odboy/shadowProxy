@@ -253,7 +253,7 @@ def main():
     # Creating a parser
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--bind', dest="bind",default='0.0.0.0', help='Default: 0.0.0.0')
+    parser.add_argument('--bind', dest="bind",default='127.0.0.1', help='Default: 127.0.0.1')
     parser.add_argument('--port', dest='port',type=int,default='8088', help='Default: 8088')
     parser.add_argument('--log-level', default='WARNING', choices=('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'), help='Default: WARNING')
     parser.add_argument('--proxyListFile',default="proxylist.txt", dest='proxyListFile', required=False, help='代理列表文件')
