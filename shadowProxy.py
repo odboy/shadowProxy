@@ -11,14 +11,16 @@ import socket
 import ssl
 import re
 import http.client
-import requests
 from urllib.parse import urlparse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from subprocess import Popen, PIPE
 from ProxyCoordinator import ProxyCoordinator
+import OpenSSL
+from certs import CertsTool
 
 proxyCoor = ProxyCoordinator()
+
 
 class Utility(object):
     @staticmethod
@@ -63,8 +65,8 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 class shadowProxyRequestHandler(BaseHTTPRequestHandler):
     global proxyCoor
     def __init__(self, *args, **kwargs):
-        self.cakey = Utility.getAbsPath('certs/ca.key')  # CA私钥
-        self.cacert = Utility.getAbsPath('certs/ca.crt')  # CA公钥自签名根证书
+        self.cakey = Utility.getAbsPath('certs/shadowproxyCA.key')  # CA私钥
+        self.cacert = Utility.getAbsPath('certs/shadowproxyCA.crt')  # CA公钥自签名根证书
         self.certkey = Utility.getAbsPath('certs/cert.key')  # 服务器私钥
         self.certdir = Utility.getAbsPath('certs/sites/')  # 站点证书
         self.timeout = 15  # up-steaming timeout时间
@@ -79,7 +81,7 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
             self.connect_intercept()
         else:
             # 提示证书安装
-            print(Utility.colorRender(31, "服务器缺少证书，请在程序目录生成证书"))
+            print(Utility.colorRender(31, "服务器缺少证书，请在程序目录生成证书\t\x1b[32mpython3 certs.py CREATECA\x1b[0m"))
             self.send_error(502,"Server lack of certificate")
             # 错误代码 https://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html
             return
@@ -96,10 +98,20 @@ class shadowProxyRequestHandler(BaseHTTPRequestHandler):
             if not os.path.isfile(certpath):
                 epoch = "%d" % (time.time() * 1000)
                 # 生成证书请求
-                p1 = Popen(["openssl", "req", "-new", "-key", self.certkey, "-subj", "/CN=%s" % hostname], stdout=PIPE)
+                # p1 = Popen(["openssl", "req", "-new", "-key", self.certkey, "-subj", "/CN=%s" % hostname], stdout=PIPE)
+                csreq = CertsTool.create_csr(self.certkey, hostname)
                 # 使用CA的私钥对证书请求文件进行签名，生成证书。
-                p2 = Popen(["openssl", "x509", "-req", "-days", "3650", "-CA", self.cacert, "-CAkey", self.cakey, "-set_serial", epoch, "-out", certpath], stdin=p1.stdout, stderr=PIPE)
-                p2.communicate()
+                # p2 = Popen(["openssl", "x509", "-req", "-days", "3650", "-CA", self.cacert, "-CAkey", self.cakey, "-set_serial", epoch, "-out", certpath], stdin=p1.stdout, stderr=PIPE)
+                # p2.communicate()
+                ca, key = CertsTool.load_ca(self.cacert,self.cakey)
+                sitecrt = CertsTool.certificate_csr(ca, key, csreq)
+
+                with open(os.path.join(self.certdir, "%s.crt"%hostname), "wb") as f:
+                    f.write(
+                        OpenSSL.crypto.dump_certificate(
+                            OpenSSL.crypto.FILETYPE_PEM,
+                            sitecrt))
+
 
         self.send_response_only(200, 'Connection Established')
         self.end_headers()
@@ -244,9 +256,9 @@ def run(HandlerClass=BaseHTTPRequestHandler,
 def main():
     headCharPic="\r        .--.\n" \
                 "       |o_o |    ------------------ \n" \
-                "       |:_/ |   < Author: Mr.Bingo >\n" \
+                "       |:_/ |   <   猎户攻防实验室   >\n" \
                 "      //   \ \   ------------------ \n" \
-                "     (|     | ) <    oddboy.cn     >\n" \
+                "     (|     | ) < liehu.tass.com.cn >\n" \
                 "    /'\_   _/`\  ------------------\n" \
                 "    \___)=(___/\n"
     print(headCharPic)
@@ -255,7 +267,7 @@ def main():
 
     parser.add_argument('--bind', dest="bind",default='127.0.0.1', help='Default: 127.0.0.1')
     parser.add_argument('--port', dest='port',type=int,default='8088', help='Default: 8088')
-    parser.add_argument('--log-level', default='WARNING', choices=('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'), help='Default: WARNING')
+    parser.add_argument('--log-level', default='CRITICAL', choices=('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'), help='Default: CRITICAL')
     parser.add_argument('--proxyListFile',default="proxylist.txt", dest='proxyListFile', required=False, help='代理列表文件')
 
     parser.add_argument('-t',dest="multipletimes", default=2147483647,type=int,help='单一代理可被使用的次数,默认为2^31-1')

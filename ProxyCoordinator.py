@@ -8,6 +8,7 @@ __version__ = "0.1"
 
 import requests
 import re
+import os
 import threading
 import queue
 import time
@@ -67,7 +68,10 @@ class ProxyCoordinator(object):
             t.join()
         print(" \b\b" * 50,end="")
         print("成功导入 %d 个代理"%self.usableCount)
-
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".list"),"w",encoding="utf-8") as f:
+            for key, value in self.proxyDict.items():
+                if int(value) > 0:
+                    f.write(key+"\n")
 
     def getPublicIP(self, proxy=None):
         """获取通过Proxy上网的公网IP地址，若Proxy为None，则获取本地主机的公网IP"""
