@@ -155,13 +155,15 @@ if __name__ == "__main__":
     csreq = CertsTool.create_csr(os.path.join(path, "cert.key"),"oddboy.cn")
     testcrt = CertsTool.certificate_csr(ca,key,csreq)
 
-    with open(os.path.join(path, "sites/testcert.crt"), "wb") as f:
+    if not os.path.exists(os.path.join(path,"sites")):
+        os.makedirs(os.path.join(path,"sites"))
+    with open(os.path.join(path,"sites" ,"testcert.crt"), "wb") as f:
         f.write(
         OpenSSL.crypto.dump_certificate(
             OpenSSL.crypto.FILETYPE_PEM,
             testcrt))
 
-    print("生成测试站点证书："+ os.path.join(path, "sites/testcert.crt"))
+    print("生成测试站点证书："+ os.path.join(path,"sites" ,"testcert.crt"))
     print()
     print(OpenSSL.crypto.dump_certificate(
             OpenSSL.crypto.FILETYPE_PEM,

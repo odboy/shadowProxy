@@ -65,10 +65,14 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 class shadowProxyRequestHandler(BaseHTTPRequestHandler):
     global proxyCoor
     def __init__(self, *args, **kwargs):
-        self.cakey = Utility.getAbsPath('certs/shadowproxyCA.key')  # CA私钥
-        self.cacert = Utility.getAbsPath('certs/shadowproxyCA.crt')  # CA公钥自签名根证书
-        self.certkey = Utility.getAbsPath('certs/cert.key')  # 服务器私钥
-        self.certdir = Utility.getAbsPath('certs/sites/')  # 站点证书
+        # self.cakey = Utility.getAbsPath('certs/shadowproxyCA.key')  # CA私钥
+        # self.cacert = Utility.getAbsPath('certs/shadowproxyCA.crt')  # CA公钥自签名根证书
+        # self.certkey = Utility.getAbsPath('certs/cert.key')  # 服务器私钥
+        # self.certdir = Utility.getAbsPath('certs/sites/')  # 站点证书
+        self.cakey = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'certs','shadowproxyCA.key')  # CA私钥
+        self.cacert = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'certs','shadowproxyCA.crt') # CA公钥自签名根证书
+        self.certkey = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'certs','cert.key')         # 服务器私钥
+        self.certdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'certs','sites')            # 站点证书
         self.timeout = 15  # up-steaming timeout时间
         self.threadLock = threading.Lock()
         self.tls        =   threading.local()   # 线程局部变量 Thread Local Storage

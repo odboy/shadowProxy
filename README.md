@@ -48,7 +48,9 @@ Serving HTTP on 127.0.0.1 port 8088 (http://127.0.0.1:8088/) ...
 
 - 安装SSL证书(访问HTTPS需要)
 
-Unix-Like系统下，直接运行`setup_https_intercept.sh`生成证书。 Windows下请自行动手。
+【方式一】
+
+Unix-Like系统下，直接运行`setup_https_intercept.sh`生成证书。
 ```bash
 ./setup_https_intercept.sh
 Generating RSA private key, 2048 bit long modulus
@@ -59,6 +61,15 @@ Generating RSA private key, 2048 bit long modulus
 ....................................................................+++
 ..+++
 e is 65537 (0x10001)
+```
+【方式二】
+*nix及windows主机均可使用。 
+```bash
+$ python3 certs.py CREATECA
+生成CA根证书：shadowProxy/certs/shadowproxyCA.crt
+根证书私钥：shadowProxy/certs/shadowproxyCA.key
+Proxy私钥：shadowProxy/certs/cert.key
+生成测试站点证书：shadowProxy/certs/sites/testcert.crt
 ```
 
 然后在代理到端口的浏览器中访问[http://shadow.proxy/](http://shadow.proxy/) 即可下载，导入系统/浏览器即可。
